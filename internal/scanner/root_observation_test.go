@@ -155,6 +155,9 @@ func TestShouldSkipMovieSupplementalFile(t *testing.T) {
 	if !shouldSkipMovieSupplementalFile("/movies/Movie (2000)/Sample.mkv") {
 		t.Fatal("expected Sample.mkv to be skipped")
 	}
+	if !shouldSkipMovieSupplementalFile("/movies/Movie.2000.1080p.BluRay/Movie.2000.1080p.BluRay-sample.mkv") {
+		t.Fatal("expected a sample of a matching movie to be skipped")
+	}
 	if shouldSkipMovieSupplementalFile("/movies/Sample (2011)/Sample.2011.1080p.BluRay.mkv") {
 		t.Fatal("did not expect a real movie named Sample to be skipped")
 	}

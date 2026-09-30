@@ -125,7 +125,8 @@ func shouldSkipMovieSupplementalFile(path string) bool {
 		return true
 	}
 	stem := naming.ParseInferMovieStem(baseNoExt, parentTitle, parentYear)
-	return stem.Title == "" || !naming.InferTitlesCoherent(parentTitle, stem.Title)
+	return stem.Title == "" || !naming.InferTitlesCoherent(parentTitle, stem.Title) ||
+		!strings.Contains(" "+normalizeScannerDirLabel(stem.Title)+" ", " sample ")
 }
 
 // Scanner discovers and indexes media files in media folders.
@@ -418,13 +419,13 @@ func cleanScopedAudiobookScanRoot(path string) (string, error) {
 }
 
 // walkMode tells walkLogicalTree which file extensions to surface and
-// which library-specific filename heuristics (sample/extra skipping)
+// which library-specific filename heuristics (sample skipping)
 // to apply.
 type walkMode int
 
 const (
-	walkModeVideo     walkMode = iota // bare video walk: video extensions, no movie skipping
-	walkModeMovie                     // movie library: video extensions + sample/extra skipping
+	walkModeVideo     walkMode = iota // video extensions + sample skipping
+	walkModeMovie                     // movie library: video extensions + sample skipping
 	walkModeAudiobook                 // audiobook library: audio extensions, no skipping
 	walkModePodcast                   // podcast library: audio extensions, no skipping
 	walkModeEbook                     // ebook library: ebook extensions, no skipping
@@ -469,6 +470,10 @@ func (m walkMode) acceptsPath(path string) bool {
 		return SupportsEbookFile(path)
 	}
 	return m.acceptsExt(strings.ToLower(filepath.Ext(path)))
+}
+
+func (m walkMode) isVideo() bool {
+	return m == walkModeMovie || m == walkModeVideo
 }
 
 func canonicalWalkPath(path string) (string, error) {
@@ -574,7 +579,7 @@ func walkLogicalTree(
 		if targetInfo.IsDir() {
 			return walkLogicalTree(ctx, logicalPath, resolved, mode, visitedPhysicalDirs, ignoreRulesStack, filePaths, walkFailures, readDir)
 		}
-		if mode == walkModeMovie && shouldSkipMovieSupplementalFile(logicalPath) {
+		if mode.isVideo() && shouldSkipMovieSupplementalFile(logicalPath) {
 			return nil
 		}
 		if mode.acceptsPath(logicalPath) {
@@ -584,7 +589,7 @@ func walkLogicalTree(
 	}
 
 	if !info.IsDir() {
-		if mode == walkModeMovie && shouldSkipMovieSupplementalFile(logicalPath) {
+		if mode.isVideo() && shouldSkipMovieSupplementalFile(logicalPath) {
 			return nil
 		}
 		if mode.acceptsPath(logicalPath) {
@@ -607,7 +612,7 @@ func walkLogicalTree(
 	if isIgnoredDirectoryPath(logicalPath) {
 		return nil
 	}
-	if mode == walkModeMovie && shouldSkipMovieSupplementalDir(logicalPath) {
+	if mode.isVideo() && shouldSkipMovieSupplementalDir(logicalPath) {
 		return nil
 	}
 
@@ -661,7 +666,7 @@ func walkLogicalTree(
 				}
 				continue
 			}
-			if mode == walkModeMovie && shouldSkipMovieSupplementalFile(logicalChild) {
+			if mode.isVideo() && shouldSkipMovieSupplementalFile(logicalChild) {
 				continue
 			}
 			if mode.acceptsPath(entry.Name()) {
@@ -677,7 +682,7 @@ func walkLogicalTree(
 			continue
 		}
 
-		if mode == walkModeMovie && shouldSkipMovieSupplementalFile(logicalChild) {
+		if mode.isVideo() && shouldSkipMovieSupplementalFile(logicalChild) {
 			continue
 		}
 		if mode.acceptsPath(entry.Name()) {
@@ -2633,6 +2638,16 @@ func (s *Scanner) ScanFile(ctx context.Context, filePath string, folder *models.
 			return err
 		}
 		return s.syncVanishedVideoQueues(ctx, folder.ID, cleanFile)
+	}
+	if walkModeFor(folder.Type).isVideo() {
+		if shouldSkipMovieSupplementalFile(cleanFile) {
+			return nil
+		}
+		for dir := filepath.Dir(cleanFile); pathWithinAnyRoot(dir, folder.Paths); dir = filepath.Dir(dir) {
+			if shouldSkipMovieSupplementalDir(dir) {
+				return nil
+			}
+		}
 	}
 
 	// Look up only this specific file instead of loading the entire folder.

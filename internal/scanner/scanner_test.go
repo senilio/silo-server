@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -70,6 +71,60 @@ func TestCollectLogicalFilePaths_PreservesLogicalSymlinkRootPaths(t *testing.T) 
 	}
 	if files[0] != want {
 		t.Fatalf("files[0] = %q, want %q", files[0], want)
+	}
+}
+
+func TestCollectLogicalFilePaths_SkipsVideoSamples(t *testing.T) {
+	for _, kind := range []string{"movies", "series"} {
+		t.Run(kind, func(t *testing.T) {
+			root := t.TempDir()
+			paths := []string{
+				"Fallout.2024.S02E01.2160p.WEB.h265-ETHEL/Fallout.2024.S02E01.mkv",
+				"Fallout.2024.S02E01.2160p.WEB.h265-ETHEL/Sample/fallout.2024.s02e01.2160p.web.h265-ethel.sample.mkv",
+				"Fallout.2024.S02E01.2160p.WEB.h265-ETHEL/Samples/Sample1.mkv",
+				"Fallout.2024.S02E01.2160p.WEB.h265-ETHEL/fallout.2024.s02e01.2160p.web.h265-ethel-sample.mkv",
+				"Fallout.2024.S02E01.2160p.WEB.h265-ETHEL/fallout.2024.s02e01.2160p.web.h265-ethel_sample.mkv",
+				"Fallout.2024.S02E01.2160p.WEB.h265-ETHEL/Sample 1.mkv",
+				"Fallout.2024.S02E01.2160p.WEB.h265-ETHEL/sample.avi",
+			}
+			for _, path := range paths {
+				writeTestFile(t, filepath.Join(root, path), "video")
+			}
+			files, failures, err := collectLogicalFilePaths(t.Context(), []string{root}, kind, []string{root})
+			if err != nil || len(failures) != 0 {
+				t.Fatalf("walk: %v, failures: %v", err, failures)
+			}
+			want := []string{filepath.Join(root, paths[0])}
+			if !slices.Equal(files, want) {
+				t.Fatalf("files = %v, want %v", files, want)
+			}
+		})
+	}
+}
+
+func TestScanFile_SkipsVideoSamples(t *testing.T) {
+	pool := newDeadRootTestPool(t)
+	root := t.TempDir()
+	for _, kind := range []string{"movies", "series"} {
+		t.Run(kind, func(t *testing.T) {
+			folderID := seedDeadRootTestFolder(t, pool, kind, "Sample scan")
+			folder := &models.MediaFolder{ID: folderID, Type: kind, Paths: []string{root}}
+			s := NewScanner(NewFileRepository(pool), "definitely-missing-ffprobe", nil, 1, false, 0)
+			for _, relative := range []string{
+				"Movie.2000.1080p.BluRay/Movie.2000.1080p.BluRay-sample.mkv",
+				"Movie.2000.1080p.BluRay/Sample/preview.mkv",
+			} {
+				path := filepath.Join(root, relative)
+				writeTestFile(t, path, "video")
+				if err := s.ScanFile(t.Context(), path, folder); err != nil {
+					t.Fatalf("ScanFile(%q): %v", relative, err)
+				}
+				var count int
+				if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM media_files WHERE file_path = $1`, path).Scan(&count); err != nil || count != 0 {
+					t.Fatalf("sample %q: rows = %d, error = %v", relative, count, err)
+				}
+			}
+		})
 	}
 }
 
